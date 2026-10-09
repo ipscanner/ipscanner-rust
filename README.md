@@ -18,7 +18,7 @@ async fn main() -> Result<(), ipscanner::Error> {
     let client = ipscanner::Client::new("pk_live_...");
 
     let result = client.ip().lookup("1.1.1.1").await?;
-    println!("{} {} {}", result.target.ip, result.network_class, result.purity.grade);
+    println!("{} {} {}", result.target.ip, result.network_class, result.risk_score);
     Ok(())
 }
 ```
@@ -44,6 +44,8 @@ let me = client.ip().myip().await?;
 ```
 
 `demo` and `myip` work without a key.
+
+`vpn_provider` is the VPN brand (such as Mullvad) when known; `provider` is the network owner. On the Free plan, premium fields (`purity`, `provider`, `vpn_provider`, precise geo, bulk `score`/`grade`/`verdict`) are null, and the response lists them in `locked` with `plan_required` set to `Starter`.
 
 ### Bulk
 
@@ -81,6 +83,38 @@ let verified = client.agentscan().verify(&CrawlerVerifyRequest::bot("66.249.66.1
 let allowlist = client.agentscan().allowlist().await?;
 let me = client.agentscan().self_check(&AgentSelfRequest::default()).await?;
 ```
+
+### Edge
+
+```rust
+use ipscanner::EdgeCheckRequest;
+
+let res = client.edge().check(&EdgeCheckRequest {
+    site: Some("site_abc".into()),
+    user_agent: Some("Mozilla/5.0".into()),
+    ..EdgeCheckRequest::new("203.0.113.7")
+}).await?;
+println!("{}", res.class);
+```
+
+### Sites
+
+```rust
+let policy = client.sites().policy("site_abc").await?;
+```
+
+### Gate
+
+```rust
+use ipscanner::GateVerifyRequest;
+
+let res = client.gate().verify(&GateVerifyRequest::new("gs_...", token)).await?;
+if res.action == "block" {
+    // reject the form
+}
+```
+
+`gate().verify` sends the site secret, not the API key, and is never retried.
 
 ### Provenance
 

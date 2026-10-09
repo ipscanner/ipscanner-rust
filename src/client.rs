@@ -7,7 +7,9 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::error::{self, Error};
-use crate::resources::{Account, Agentscan, AsnDirectory, Bulk, Crawlers, Ip, Provenance};
+use crate::resources::{
+    Account, Agentscan, AsnDirectory, Bulk, Crawlers, Edge, Gate, Ip, Provenance, Sites,
+};
 
 /// The default API base URL.
 pub const DEFAULT_BASE_URL: &str = "https://ipscanner.io";
@@ -15,6 +17,19 @@ pub const DEFAULT_BASE_URL: &str = "https://ipscanner.io";
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_RETRIES: u32 = 2;
 const USER_AGENT_VALUE: &str = concat!("ipscanner-rust/", env!("CARGO_PKG_VERSION"));
+
+#[derive(Clone, Copy)]
+struct Opts<'a> {
+    accept: &'a str,
+    timeout: Option<Duration>,
+    auth: bool,
+}
+
+const JSON: Opts<'static> = Opts {
+    accept: "application/json",
+    timeout: None,
+    auth: true,
+};
 
 /// An IPScanner API client. Cheap to clone; clones share one connection pool.
 #[derive(Clone)]
@@ -107,14 +122,27 @@ impl Client {
         Crawlers::new(self)
     }
 
+    /// Edge checks: Agentscan and the network check for one visitor.
+    pub fn edge(&self) -> Edge<'_> {
+        Edge::new(self)
+    }
+
+    /// Site policies for Workers.
+    pub fn sites(&self) -> Sites<'_> {
+        Sites::new(self)
+    }
+
+    /// The form gate's server-side token verification.
+    pub fn gate(&self) -> Gate<'_> {
+        Gate::new(self)
+    }
+
     pub(crate) async fn get<T: DeserializeOwned>(
         &self,
         path: &str,
         query: &[(&str, String)],
     ) -> Result<T, Error> {
-        let res = self
-            .send(Method::GET, path, query, None, None, "application/json")
-            .await?;
+        let res = self.send(Method::GET, path, query, None, JSON).await?;
         decode(res).await
     }
 
@@ -139,10 +167,23 @@ impl Client {
             path,
             &[],
             Some(body),
-            timeout,
-            "application/json",
+            Opts { timeout, ..JSON },
         )
         .await
+    }
+
+    pub(crate) async fn post_keyless<T: DeserializeOwned, B: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T, Error> {
+        let body = serde_json::to_vec(body)?;
+        let opts = Opts {
+            auth: false,
+            ..JSON
+        };
+        let res = self.send(Method::POST, path, &[], Some(body), opts).await?;
+        decode(res).await
     }
 
     pub(crate) async fn get_text(
@@ -152,7 +193,7 @@ impl Client {
         accept: &str,
     ) -> Result<String, Error> {
         let res = self
-            .send(Method::GET, path, query, None, None, accept)
+            .send(Method::GET, path, query, None, Opts { accept, ..JSON })
             .await?;
         Ok(res.text().await?)
     }
@@ -163,8 +204,7 @@ impl Client {
         path: &str,
         query: &[(&str, String)],
         body: Option<Vec<u8>>,
-        timeout: Option<Duration>,
-        accept: &str,
+        opts: Opts<'_>,
     ) -> Result<Response, Error> {
         let inner = &self.inner;
         let url = format!("{}/v1{}", inner.base_url, path);
@@ -178,13 +218,13 @@ impl Client {
             let mut req = inner
                 .http
                 .request(method.clone(), &url)
-                .timeout(timeout.unwrap_or(inner.timeout))
+                .timeout(opts.timeout.unwrap_or(inner.timeout))
                 .header(USER_AGENT, USER_AGENT_VALUE)
-                .header(ACCEPT, accept);
+                .header(ACCEPT, opts.accept);
             if !query.is_empty() {
                 req = req.query(query);
             }
-            if let Some(key) = &inner.api_key {
+            if let Some(key) = inner.api_key.as_ref().filter(|_| opts.auth) {
                 req = req.header(AUTHORIZATION, format!("Bearer {key}"));
             }
             if let Some(b) = &body {

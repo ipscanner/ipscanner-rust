@@ -67,6 +67,44 @@ async fn parses_ndjson_stream() {
 }
 
 #[tokio::test]
+async fn parses_locked_stream_lines() {
+    let body = concat!(
+        r#"{"type":"meta","total":2,"metered":2,"planRequired":"Starter"}"#,
+        "\n",
+        r#"{"type":"result","ip":"185.65.135.1","classification":"vpn","anonymized":true,"score":null,"grade":null,"verdict":null,"vpnProvider":null,"locked":["score","grade","verdict","vpnProvider"]}"#,
+        "\n",
+        r#"{"type":"result","index":1,"ip":"185.65.135.2","verdict":"dirty","score":10,"grade":"C","vpnProvider":"Mullvad"}"#,
+        "\n",
+        r#"{"type":"done","reason":"complete","processed":2,"total":2}"#,
+    );
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/ip/bulk"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/x-ndjson"))
+        .mount(&server)
+        .await;
+
+    let events = collect(
+        &client(server.uri()),
+        &BulkRequest::ips(["185.65.135.1", "185.65.135.2"]),
+    )
+    .await;
+
+    assert_eq!(events[0].plan_required, "Starter");
+    assert_eq!(events[1].score, 0);
+    assert_eq!(events[1].grade, "");
+    assert_eq!(events[1].vpn_provider, "");
+    assert_eq!(
+        events[1].locked,
+        ["score", "grade", "verdict", "vpnProvider"]
+    );
+    assert_eq!(events[2].vpn_provider, "Mullvad");
+    assert_eq!(events[2].score, 10);
+    assert!(events[2].locked.is_empty());
+    assert!(events[3].complete());
+}
+
+#[tokio::test]
 async fn done_with_missing_rows_is_not_complete() {
     let ev: BulkEvent = serde_json::from_value(json!({
         "type": "done", "reason": "complete", "processed": 2, "total": 5

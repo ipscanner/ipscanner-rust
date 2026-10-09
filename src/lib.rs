@@ -5,7 +5,7 @@
 //! let client = ipscanner::Client::new("pk_live_...");
 //!
 //! let result = client.ip().lookup("1.1.1.1").await?;
-//! println!("{} {}", result.network_class, result.purity.grade);
+//! println!("{} {}", result.network_class, result.risk_score);
 //!
 //! let vpn = client.ip().vpn("2001:4860:4860::8888").await?;
 //! println!("vpn: {}", vpn.is_vpn);

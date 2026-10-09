@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::Deduction;
+use super::{null_default, Deduction};
 
 /// Input for the bulk endpoints: a list of IPs, or a pasted blob the server splits.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -42,24 +42,30 @@ pub struct BulkCheck {
     pub submitted: i64,
     pub unique: i64,
     pub duplicates: i64,
+    #[serde(deserialize_with = "null_default")]
     pub invalid: Vec<String>,
+    /// Empty on the Free plan.
+    #[serde(deserialize_with = "null_default")]
     pub summary: HashMap<String, i64>,
+    #[serde(deserialize_with = "null_default")]
     pub results: Vec<BulkResult>,
+    pub plan_required: Option<String>,
 }
 
-/// One row of a bulk check.
+/// One row of a bulk check. Score, grade, verdict, deductions and VPN brand are null on the Free plan.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct BulkResult {
     pub input: String,
     pub ip: String,
     pub port: Option<u16>,
-    pub score: i64,
-    pub grade: String,
-    pub verdict: String,
+    pub score: Option<i64>,
+    pub grade: Option<String>,
+    pub verdict: Option<String>,
     pub classification: String,
     pub confidence: f64,
     pub anonymized: bool,
+    pub vpn_provider: Option<String>,
     pub is_tor_exit: bool,
     pub in_vpn_range: bool,
     pub in_datacenter_range: bool,
@@ -67,10 +73,12 @@ pub struct BulkResult {
     pub asn_name: Option<String>,
     pub asn_type: Option<String>,
     pub country: Option<String>,
+    #[serde(deserialize_with = "null_default")]
     pub deductions: Vec<Deduction>,
+    pub locked: Vec<String>,
 }
 
-/// One line of the `POST /v1/ip/bulk` NDJSON stream. Missing fields are zero values.
+/// One line of the `POST /v1/ip/bulk` NDJSON stream. Missing and null fields are zero values.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct BulkEvent {
@@ -84,11 +92,16 @@ pub struct BulkEvent {
     pub message: String,
     pub error: String,
     pub ip: String,
+    #[serde(deserialize_with = "null_default")]
     pub verdict: String,
     pub classification: String,
     pub confidence: f64,
     pub anonymized: bool,
+    #[serde(deserialize_with = "null_default")]
+    pub vpn_provider: String,
+    #[serde(deserialize_with = "null_default")]
     pub score: i64,
+    #[serde(deserialize_with = "null_default")]
     pub grade: String,
     pub is_tor_exit: bool,
     pub asn: String,
@@ -98,6 +111,10 @@ pub struct BulkEvent {
     pub processed: i64,
     pub failed: i64,
     pub metered: i64,
+    /// Set on the `meta` line when result lines are locked.
+    pub plan_required: String,
+    /// Fields of a `result` line nulled because of the plan.
+    pub locked: Vec<String>,
 }
 
 impl BulkEvent {

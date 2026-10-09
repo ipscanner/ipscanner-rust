@@ -206,4 +206,6 @@ pub struct AgentSelfCheck {
     pub as_of: String,
     pub asn: Option<AsnResponse>,
     pub geo: Option<GeolocationResponse>,
+    pub locked: Vec<String>,
+    pub plan_required: Option<String>,
 }

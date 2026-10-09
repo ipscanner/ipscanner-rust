@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use ipscanner::{
-    AgentCheckRequest, AgentSelfRequest, BulkRequest, Client, Error, ExportParams, HistoryParams,
-    ProvenanceCheckRequest,
+    AgentCheckRequest, AgentSelfRequest, BulkRequest, Client, EdgeCheckRequest, Error,
+    ExportParams, GateVerifyRequest, HistoryParams, ProvenanceCheckRequest,
 };
 use serde_json::json;
 use wiremock::matchers::{body_json, header, method, path, query_param};
@@ -26,7 +26,7 @@ async fn sends_auth_and_default_headers() {
     Mock::given(method("GET"))
         .and(path("/v1/vpn/1.1.1.1"))
         .and(header("authorization", "Bearer test-key"))
-        .and(header("user-agent", "ipscanner-rust/0.1.0"))
+        .and(header("user-agent", "ipscanner-rust/0.2.0"))
         .and(header("accept", "application/json"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "ip": "1.1.1.1", "isVpn": false, "isTor": false, "networkClass": "hosting",
@@ -74,7 +74,8 @@ async fn escapes_ipv6_path_segments() {
 
     let geo = client(&server).ip().geo("2001:db8::1").await.unwrap();
     assert_eq!(geo.country, "Germany");
-    assert_eq!(geo.accuracy_radius, 50);
+    assert_eq!(geo.accuracy_radius, Some(50));
+    assert_eq!(geo.postal_code, None);
 }
 
 #[tokio::test]
@@ -101,10 +102,395 @@ async fn lookup_posts_target_and_decodes_result() {
     let r = client(&server).ip().lookup("8.8.8.8").await.unwrap();
     assert_eq!(r.target.kind, "ipv4");
     assert_eq!(r.target.hostname, None);
-    assert_eq!(r.purity.deductions[0].points, 20);
+    assert_eq!(r.purity.unwrap().deductions[0].points, 20);
+    assert!(r.locked.is_empty());
+    assert_eq!(r.plan_required, None);
     assert_eq!(r.asn.unwrap().kind, "hosting");
     assert!(r.geo.is_none());
     assert!(r.degraded.is_empty());
+}
+
+#[tokio::test]
+async fn decodes_locked_lookup() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/demo/198.51.100.4"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "target": { "raw": "198.51.100.4", "kind": "ipv4", "ip": "198.51.100.4" },
+            "reserved": { "reserved": false },
+            "verdict": { "classification": "relay", "anonymized": true, "confidence": 0.95,
+                         "method": "range", "evidence": ["relay_range"] },
+            "purity": null, "networkClass": "relay", "isVpn": false, "isProxy": false,
+            "isTor": false, "provider": null, "vpnProvider": null, "riskScore": 40,
+            "geo": { "ip": "198.51.100.4", "country": "Germany", "countryCode": "DE", "city": "Berlin",
+                     "region": "BE", "postalCode": null, "latitude": null, "longitude": null,
+                     "timezone": "Europe/Berlin", "accuracyRadius": null },
+            "at": "2026-10-09T12:00:00Z",
+            "locked": ["purity", "provider", "vpnProvider", "geo.latitude", "geo.longitude",
+                       "geo.postalCode", "geo.accuracyRadius"],
+            "planRequired": "Starter",
+            "futureField": { "nested": true }
+        })))
+        .mount(&server)
+        .await;
+
+    let r = keyless(&server).ip().demo("198.51.100.4").await.unwrap();
+    assert!(r.purity.is_none());
+    assert_eq!(r.provider, None);
+    assert_eq!(r.vpn_provider, None);
+    assert_eq!(r.network_class, "relay");
+    assert_eq!(r.verdict.evidence, ["relay_range"]);
+    let geo = r.geo.unwrap();
+    assert_eq!(geo.latitude, None);
+    assert_eq!(geo.accuracy_radius, None);
+    assert_eq!(geo.city, "Berlin");
+    assert_eq!(r.locked.len(), 7);
+    assert_eq!(r.plan_required.as_deref(), Some("Starter"));
+}
+
+#[tokio::test]
+async fn decodes_hostname_lookup_whois_status() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/ip/lookup"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "target": { "raw": "example.com", "kind": "hostname", "ip": "93.184.215.14",
+                        "hostname": "example.com" },
+            "reserved": { "reserved": false },
+            "verdict": { "classification": "hosting", "anonymized": true, "confidence": 0.9,
+                         "method": "asn" },
+            "purity": { "score": 100, "grade": "S+", "verdict": "clean", "deductions": null },
+            "networkClass": "hosting", "isVpn": false, "isProxy": false, "isTor": false,
+            "vpnProvider": null, "riskScore": 25, "whoisStatus": "timeout",
+            "degraded": ["whois"], "at": "2026-10-09T12:00:00Z"
+        })))
+        .mount(&server)
+        .await;
+
+    let r = client(&server).ip().lookup("example.com").await.unwrap();
+    assert_eq!(r.whois_status.as_deref(), Some("timeout"));
+    assert!(r.whois.is_none());
+    assert!(r.purity.unwrap().deductions.is_empty());
+    assert_eq!(r.degraded, ["whois"]);
+}
+
+#[tokio::test]
+async fn decodes_vpn_provider_and_evidence() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/vpn/185.65.135.1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ip": "185.65.135.1", "isVpn": true, "isTor": false, "networkClass": "vpn",
+            "anonymized": true, "provider": "31173 Services AB", "vpnProvider": "Mullvad",
+            "riskScore": 80, "evidence": ["vpn_server_list", "vpn_operator"]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v1/proxy/185.65.135.1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ip": "185.65.135.1", "isProxy": false, "isTor": false, "networkClass": "vpn",
+            "anonymized": true, "provider": null, "vpnProvider": null, "riskScore": 80,
+            "locked": ["provider", "vpnProvider"], "planRequired": "Starter"
+        })))
+        .mount(&server)
+        .await;
+
+    let c = client(&server);
+    let vpn = c.ip().vpn("185.65.135.1").await.unwrap();
+    assert_eq!(vpn.vpn_provider.as_deref(), Some("Mullvad"));
+    assert_eq!(vpn.provider.as_deref(), Some("31173 Services AB"));
+    assert_eq!(vpn.evidence, ["vpn_server_list", "vpn_operator"]);
+    assert!(vpn.locked.is_empty());
+
+    let proxy = c.ip().proxy("185.65.135.1").await.unwrap();
+    assert_eq!(proxy.provider, None);
+    assert_eq!(proxy.locked, ["provider", "vpnProvider"]);
+    assert_eq!(proxy.plan_required.as_deref(), Some("Starter"));
+}
+
+#[tokio::test]
+async fn whois_status_on_empty_record() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/whois/example.dev"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "domain": "example.dev", "registrar": "", "registeredOn": "", "expiresOn": "",
+            "lastUpdated": "", "nameservers": [], "status": [], "privacyProtection": false,
+            "whoisStatus": "unavailable"
+        })))
+        .mount(&server)
+        .await;
+
+    let w = client(&server).ip().whois("example.dev").await.unwrap();
+    assert_eq!(w.whois_status.as_deref(), Some("unavailable"));
+    assert!(w.nameservers.is_empty());
+}
+
+#[tokio::test]
+async fn decodes_locked_bulk_rows() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/bulk/check"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "submitted": 1, "unique": 1, "duplicates": 0, "invalid": null, "summary": {},
+            "results": [{
+                "input": "1.1.1.1", "ip": "1.1.1.1", "score": null, "grade": null,
+                "verdict": null, "classification": "hosting", "confidence": 0.9,
+                "anonymized": true, "vpnProvider": null, "isTorExit": false,
+                "inVpnRange": false, "inDatacenterRange": true, "deductions": null,
+                "locked": ["score", "grade", "verdict", "deductions", "vpnProvider"]
+            }],
+            "planRequired": "Starter"
+        })))
+        .mount(&server)
+        .await;
+
+    let res = client(&server)
+        .bulk()
+        .check(&BulkRequest::ips(["1.1.1.1"]))
+        .await
+        .unwrap();
+    assert_eq!(res.plan_required.as_deref(), Some("Starter"));
+    assert!(res.invalid.is_empty());
+    assert!(res.summary.is_empty());
+    let row = &res.results[0];
+    assert_eq!(row.score, None);
+    assert_eq!(row.grade, None);
+    assert_eq!(row.verdict, None);
+    assert_eq!(row.vpn_provider, None);
+    assert!(row.deductions.is_empty());
+    assert_eq!(row.locked.len(), 5);
+}
+
+#[tokio::test]
+async fn edge_check_posts_body_and_decodes() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/edge/check"))
+        .and(header("authorization", "Bearer test-key"))
+        .and(header("content-type", "application/json"))
+        .and(body_json(json!({
+            "ip": "203.0.113.7",
+            "site": "site_abc",
+            "user_agent": "curl/8",
+            "request_id": "r1"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "class": "ai_agent",
+            "agent": { "class": "ai_agent", "confidence": 0.8, "action": "flag",
+                       "signals": { "scripted_client": "curl" } },
+            "network": { "networkClass": "vpn", "anonymized": true, "riskScore": 80,
+                         "provider": null, "vpnProvider": null, "evidence": ["vpn_range"],
+                         "country": "SE", "asn": 39351, "asnName": "31173 Services AB" },
+            "site": { "id": "site_abc", "mode": "monitor", "policyVersion": 3 },
+            "locked": ["network.provider", "network.vpnProvider"],
+            "planRequired": "Starter"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let req = EdgeCheckRequest {
+        site: Some("site_abc".into()),
+        user_agent: Some("curl/8".into()),
+        request_id: Some("r1".into()),
+        ..EdgeCheckRequest::new("203.0.113.7")
+    };
+    let res = client(&server).edge().check(&req).await.unwrap();
+    assert_eq!(res.class, "ai_agent");
+    assert_eq!(res.agent.unwrap().signals["scripted_client"], "curl");
+    let net = res.network.unwrap();
+    assert_eq!(net.asn, Some(39351));
+    assert_eq!(net.provider, None);
+    assert_eq!(net.evidence, ["vpn_range"]);
+    assert_eq!(res.site.unwrap().policy_version, 3);
+    assert!(res.degraded.is_empty());
+    assert_eq!(res.locked, ["network.provider", "network.vpnProvider"]);
+}
+
+#[tokio::test]
+async fn edge_check_decodes_missing_halves() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/edge/check"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "class": "human", "agent": null, "network": null, "site": null,
+            "degraded": ["network"]
+        })))
+        .mount(&server)
+        .await;
+
+    let res = client(&server)
+        .edge()
+        .check(&EdgeCheckRequest::new("203.0.113.7"))
+        .await
+        .unwrap();
+    assert!(res.agent.is_none() && res.network.is_none() && res.site.is_none());
+    assert_eq!(res.degraded, ["network"]);
+}
+
+#[tokio::test]
+async fn sites_policy_gets_and_decodes() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/sites/site_abc/policy"))
+        .and(header("authorization", "Bearer test-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "site": "site_abc", "mode": "enforce",
+            "policy": { "verified_bot": "allow", "malicious_automation": "block", "vpn": "flag" },
+            "version": 4, "updatedAt": "2026-10-09T10:00:00.123456789Z"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let p = client(&server).sites().policy("site_abc").await.unwrap();
+    assert_eq!(p.mode, "enforce");
+    assert_eq!(p.policy["malicious_automation"], "block");
+    assert_eq!(p.version, 4);
+}
+
+#[tokio::test]
+async fn sites_policy_maps_unknown_site() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "error": "unknown_site", "message": "No site with this id on this account"
+        })))
+        .mount(&server)
+        .await;
+
+    let err = client(&server).sites().policy("nope").await.unwrap_err();
+    assert!(matches!(err, Error::NotFound(_)));
+    assert_eq!(err.code(), Some("unknown_site"));
+}
+
+#[tokio::test]
+async fn gate_verify_is_keyless_and_decodes() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/gate/verify"))
+        .and(header("content-type", "application/json"))
+        .and(body_json(
+            json!({ "secret": "gs_123", "token": "tok", "remote_ip": "203.0.113.7" }),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true, "class": "vpn", "action": "flag", "mode": "monitor",
+            "confidence": 0.9,
+            "network": { "classification": "vpn", "anonymized": true, "provider": null,
+                         "vpn_provider": null },
+            "signals": ["vpn_range"], "hostname": "example.com",
+            "issued_at": "2026-10-09T12:00:00Z", "ip_match": true,
+            "locked": ["network.provider", "network.vpn_provider"], "planRequired": "Starter"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let req = GateVerifyRequest {
+        remote_ip: Some("203.0.113.7".into()),
+        ..GateVerifyRequest::new("gs_123", "tok")
+    };
+    let res = client(&server).gate().verify(&req).await.unwrap();
+    assert!(res.success);
+    assert_eq!(res.class, "vpn");
+    assert_eq!(res.network.vpn_provider, None);
+    assert!(res.ip_match);
+    assert_eq!(res.issued_at, "2026-10-09T12:00:00Z");
+    assert_eq!(res.locked, ["network.provider", "network.vpn_provider"]);
+    assert_eq!(res.plan_required.as_deref(), Some("Starter"));
+
+    let reqs = server.received_requests().await.unwrap();
+    assert!(reqs[0].headers.get("authorization").is_none());
+}
+
+#[tokio::test]
+async fn gate_verify_omits_remote_ip() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/gate/verify"))
+        .and(body_json(json!({ "secret": "gs_123", "token": "tok" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true, "class": "human", "action": "allow", "mode": "enforce",
+            "confidence": 0.7,
+            "network": { "classification": "residential_clean", "anonymized": false,
+                         "provider": "Telia", "vpn_provider": null },
+            "signals": [], "hostname": "example.com", "issued_at": "2026-10-09T12:00:00Z",
+            "ip_match": false
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let res = client(&server)
+        .gate()
+        .verify(&GateVerifyRequest::new("gs_123", "tok"))
+        .await
+        .unwrap();
+    assert_eq!(res.network.provider.as_deref(), Some("Telia"));
+    assert!(res.locked.is_empty());
+}
+
+#[tokio::test]
+async fn gate_verify_maps_errors_and_never_retries() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/gate/verify"))
+        .and(body_json(json!({ "secret": "gs_bad", "token": "tok" })))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+            "success": false, "error": "invalid_secret",
+            "message": "The secret does not match this token's site"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/gate/verify"))
+        .and(body_json(json!({ "secret": "gs_123", "token": "used" })))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "success": false, "error": "already_used", "message": "This token was already verified"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/gate/verify"))
+        .and(body_json(json!({ "secret": "gs_123", "token": "tok" })))
+        .respond_with(ResponseTemplate::new(503).set_body_json(json!({
+            "success": false, "error": "unavailable", "message": "Try again"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let gate = keyless(&server);
+    let err = gate
+        .gate()
+        .verify(&GateVerifyRequest::new("gs_bad", "tok"))
+        .await
+        .unwrap_err();
+    let Error::Authentication(e) = &err else {
+        panic!("expected Authentication, got {err:?}")
+    };
+    assert_eq!(e.status, 401);
+    assert_eq!(e.code, "invalid_secret");
+
+    let err = gate
+        .gate()
+        .verify(&GateVerifyRequest::new("gs_123", "used"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Api(_)));
+    assert_eq!(err.code(), Some("already_used"));
+
+    let err = gate
+        .gate()
+        .verify(&GateVerifyRequest::new("gs_123", "tok"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.status(), Some(503));
+    assert_eq!(err.code(), Some("unavailable"));
 }
 
 #[tokio::test]
@@ -190,6 +576,7 @@ async fn agentscan_self_check_sends_empty_object() {
         .unwrap();
     assert_eq!(res.ja4_source, "unavailable");
     assert!(res.asn.is_none());
+    assert!(res.locked.is_empty());
 }
 
 #[tokio::test]

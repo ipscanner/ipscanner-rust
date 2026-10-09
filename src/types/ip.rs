@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::null_default;
+
 /// Response of `GET /v1/vpn/{ip}`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -9,8 +11,16 @@ pub struct VpnResponse {
     pub is_tor: bool,
     pub network_class: String,
     pub anonymized: bool,
-    pub provider: String,
+    /// The network owner. Null on the Free plan.
+    pub provider: Option<String>,
+    /// The VPN brand when known. Null on the Free plan.
+    pub vpn_provider: Option<String>,
     pub risk_score: i64,
+    pub evidence: Vec<String>,
+    /// Fields nulled because of the plan.
+    pub locked: Vec<String>,
+    /// The plan that unlocks `locked`.
+    pub plan_required: Option<String>,
 }
 
 /// Response of `GET /v1/proxy/{ip}`.
@@ -22,11 +32,19 @@ pub struct ProxyResponse {
     pub is_tor: bool,
     pub network_class: String,
     pub anonymized: bool,
-    pub provider: String,
+    /// The network owner. Null on the Free plan.
+    pub provider: Option<String>,
+    /// The VPN brand when known. Null on the Free plan.
+    pub vpn_provider: Option<String>,
     pub risk_score: i64,
+    pub evidence: Vec<String>,
+    /// Fields nulled because of the plan.
+    pub locked: Vec<String>,
+    /// The plan that unlocks `locked`.
+    pub plan_required: Option<String>,
 }
 
-/// Response of `GET /v1/geo/{ip}`.
+/// Response of `GET /v1/geo/{ip}`. Precise-location fields are null on the Free plan.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct GeolocationResponse {
@@ -35,11 +53,13 @@ pub struct GeolocationResponse {
     pub country_code: String,
     pub city: String,
     pub region: String,
-    pub postal_code: String,
-    pub latitude: f64,
-    pub longitude: f64,
+    pub postal_code: Option<String>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
     pub timezone: String,
-    pub accuracy_radius: i64,
+    pub accuracy_radius: Option<i64>,
+    pub locked: Vec<String>,
+    pub plan_required: Option<String>,
 }
 
 /// Response of `GET /v1/asn/{ip}`.
@@ -63,9 +83,13 @@ pub struct WhoisResponse {
     pub registered_on: String,
     pub expires_on: String,
     pub last_updated: String,
+    #[serde(deserialize_with = "null_default")]
     pub nameservers: Vec<String>,
+    #[serde(deserialize_with = "null_default")]
     pub status: Vec<String>,
     pub privacy_protection: bool,
+    /// `ok`, `not_found`, `timeout`, `unavailable` or `unparsed`; set on `GET /v1/whois/{domain}`.
+    pub whois_status: Option<String>,
 }
 
 /// A full lookup, from `POST /v1/ip/lookup` or `GET /v1/demo/{ip}`.
@@ -75,19 +99,26 @@ pub struct LookupResult {
     pub target: Target,
     pub reserved: ReservedRange,
     pub verdict: Verdict,
-    pub purity: Purity,
+    /// Null on the Free plan.
+    pub purity: Option<Purity>,
     pub network_class: String,
     pub is_vpn: bool,
     pub is_proxy: bool,
     pub is_tor: bool,
     pub provider: Option<String>,
+    pub vpn_provider: Option<String>,
     pub risk_score: i64,
     pub network_type: Option<String>,
     pub geo: Option<GeolocationResponse>,
     pub asn: Option<AsnResponse>,
+    /// Present only when `whois_status` is `ok`.
     pub whois: Option<WhoisResponse>,
+    /// Set for hostname targets.
+    pub whois_status: Option<String>,
     pub degraded: Vec<String>,
     pub at: String,
+    pub locked: Vec<String>,
+    pub plan_required: Option<String>,
 }
 
 /// What a lookup target resolved to.
@@ -119,6 +150,7 @@ pub struct Verdict {
     pub anonymized: bool,
     pub confidence: f64,
     pub method: String,
+    pub evidence: Vec<String>,
 }
 
 /// The purity score and the deductions behind it.
@@ -128,6 +160,7 @@ pub struct Purity {
     pub score: i64,
     pub grade: String,
     pub verdict: String,
+    #[serde(deserialize_with = "null_default")]
     pub deductions: Vec<Deduction>,
 }
 

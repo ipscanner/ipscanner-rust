@@ -45,7 +45,16 @@ let me = client.ip().myip().await?;
 
 `demo` and `myip` work without a key.
 
-`vpn_provider` is the VPN brand (such as Mullvad) when known; `provider` is the network owner. On the Free plan, premium fields (`purity`, `provider`, `vpn_provider`, precise geo, bulk `score`/`grade`/`verdict`) are null, and the response lists them in `locked` with `plan_required` set to `Starter`.
+`vpn_provider` is the VPN brand (such as Mullvad) when known; `provider` is the network owner. On the Free plan, premium fields (`purity`, `provider`, `vpn_provider`, precise geo, bulk `score`/`grade`/`verdict`) are null, and the response lists them in `locked` with `plan_required` set to `Starter`. `vpn` and `proxy` carry `purity` (the score breakdown) on paid plans; a locked answer has `deduction_count` instead.
+
+### Email
+
+```rust
+let res = client.email().check("jane@outlok.com").await?;
+// res.status "risky", res.reason Some("typo"), res.suggestion Some("jane@outlook.com")
+```
+
+Checks syntax, throwaway domains, whether the domain receives mail, typos of big webmail domains and role addresses. The mailbox itself is not probed. One request per address.
 
 ### Bulk
 
@@ -108,13 +117,15 @@ let policy = client.sites().policy("site_abc").await?;
 ```rust
 use ipscanner::GateVerifyRequest;
 
-let res = client.gate().verify(&GateVerifyRequest::new("gs_...", token)).await?;
+let mut req = GateVerifyRequest::new("gs_...", token);
+req.email = Some(form_email); // optional: adds the email check
+let res = client.gate().verify(&req).await?;
 if res.action == "block" {
     // reject the form
 }
 ```
 
-`gate().verify` sends the site secret, not the API key, and is never retried.
+`gate().verify` sends the site secret, not the API key, and is never retried. With `email`, `res.email` holds the check and its action, and `res.action` is the stricter of the network and email actions.
 
 ### Provenance
 

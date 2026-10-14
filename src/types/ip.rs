@@ -17,6 +17,10 @@ pub struct VpnResponse {
     pub vpn_provider: Option<String>,
     pub risk_score: i64,
     pub evidence: Vec<String>,
+    /// The score breakdown. Null on the Free plan.
+    pub purity: Option<Purity>,
+    /// On a locked answer: how many reasons the withheld breakdown holds.
+    pub deduction_count: Option<i64>,
     /// Fields nulled because of the plan.
     pub locked: Vec<String>,
     /// The plan that unlocks `locked`.
@@ -38,6 +42,10 @@ pub struct ProxyResponse {
     pub vpn_provider: Option<String>,
     pub risk_score: i64,
     pub evidence: Vec<String>,
+    /// The score breakdown. Null on the Free plan.
+    pub purity: Option<Purity>,
+    /// On a locked answer: how many reasons the withheld breakdown holds.
+    pub deduction_count: Option<i64>,
     /// Fields nulled because of the plan.
     pub locked: Vec<String>,
     /// The plan that unlocks `locked`.
@@ -117,6 +125,8 @@ pub struct LookupResult {
     pub whois_status: Option<String>,
     pub degraded: Vec<String>,
     pub at: String,
+    /// On a locked answer: how many reasons the withheld purity holds.
+    pub deduction_count: Option<i64>,
     pub locked: Vec<String>,
     pub plan_required: Option<String>,
 }

@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::error::{self, Error};
 use crate::resources::{
-    Account, Agentscan, AsnDirectory, Bulk, Crawlers, Edge, Gate, Ip, Provenance, Sites,
+    Account, Agentscan, AsnDirectory, Bulk, Crawlers, Edge, Email, Gate, Ip, Provenance, Sites,
 };
 
 /// The default API base URL.
@@ -135,6 +135,11 @@ impl Client {
     /// The form gate's server-side token verification.
     pub fn gate(&self) -> Gate<'_> {
         Gate::new(self)
+    }
+
+    /// Email address checks.
+    pub fn email(&self) -> Email<'_> {
+        Email::new(self)
     }
 
     pub(crate) async fn get<T: DeserializeOwned>(

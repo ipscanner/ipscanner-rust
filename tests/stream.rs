@@ -203,3 +203,17 @@ async fn handles_chunks_split_mid_line() {
     assert_eq!(events[3].index, 2);
     assert!(events[4].complete());
 }
+
+#[test]
+fn complete_does_not_overflow() {
+    let done = |processed, failed, total| BulkEvent {
+        kind: "done".into(),
+        reason: "complete".into(),
+        processed,
+        failed,
+        total,
+        ..Default::default()
+    };
+    assert!(done(i64::MAX, 1, i64::MAX).complete());
+    assert!(!done(i64::MIN, -1, i64::MIN).complete());
+}

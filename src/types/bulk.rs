@@ -122,6 +122,6 @@ impl BulkEvent {
     pub fn complete(&self) -> bool {
         self.kind == "done"
             && self.reason == "complete"
-            && self.processed + self.failed >= self.total
+            && i128::from(self.processed) + i128::from(self.failed) >= i128::from(self.total)
     }
 }

@@ -49,7 +49,7 @@ impl fmt::Debug for BulkStream {
 }
 
 impl BulkStream {
-    fn new<S, B, E>(body: S) -> Self
+    pub(crate) fn new<S, B, E>(body: S) -> Self
     where
         S: Stream<Item = Result<B, E>> + Send + 'static,
         B: AsRef<[u8]> + 'static,

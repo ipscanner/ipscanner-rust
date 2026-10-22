@@ -1,0 +1,49 @@
+[package]
+name = "ipscanner-io-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+futures-util = { version = "0.3", default-features = false }
+ipscanner-io = { path = ".." }
+libfuzzer-sys = "0.4"
+reqwest = { version = "0.12", default-features = false }
+serde = "1"
+# exact float parsing, so a decode/encode round trip is lossless
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "decode"
+path = "fuzz_targets/decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "error_response"
+path = "fuzz_targets/error_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bulk_stream"
+path = "fuzz_targets/bulk_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "path_segment"
+path = "fuzz_targets/path_segment.rs"
+test = false
+doc = false
+bench = false

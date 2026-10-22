@@ -19,6 +19,9 @@
 
 mod client;
 mod error;
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub mod fuzzing;
 pub mod resources;
 pub mod types;
 

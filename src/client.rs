@@ -277,6 +277,10 @@ async fn decode<T: DeserializeOwned>(res: Response) -> Result<T, Error> {
 
 /// Percent-encodes a single path segment.
 pub(crate) fn segment(s: &str) -> String {
+    // The URL parser resolves "." and ".." (even as %2E) onto another route; keep them literal.
+    if s == "." || s == ".." {
+        return s.replace('.', "%252E");
+    }
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
@@ -365,5 +369,15 @@ mod tests {
         assert_eq!(segment("2001:db8::1"), "2001%3Adb8%3A%3A1");
         assert_eq!(segment("1.1.1.1"), "1.1.1.1");
         assert_eq!(segment("a/b"), "a%2Fb");
+    }
+
+    #[test]
+    fn dot_segments_stay_on_the_route() {
+        for s in [".", ".."] {
+            let path = format!("/v1/vpn/{}", segment(s));
+            let url = reqwest::Url::parse(&format!("https://x{path}")).unwrap();
+            assert_eq!(url.path(), path);
+        }
+        assert_eq!(segment("..."), "...");
     }
 }

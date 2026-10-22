@@ -26,7 +26,7 @@ async fn sends_auth_and_default_headers() {
     Mock::given(method("GET"))
         .and(path("/v1/vpn/1.1.1.1"))
         .and(header("authorization", "Bearer test-key"))
-        .and(header("user-agent", "ipscanner-rust/0.3.0"))
+        .and(header("user-agent", "ipscanner-rust/0.3.1"))
         .and(header("accept", "application/json"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "ip": "1.1.1.1", "isVpn": false, "isTor": false, "networkClass": "hosting",

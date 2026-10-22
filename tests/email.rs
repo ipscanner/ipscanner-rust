@@ -17,7 +17,7 @@ async fn email_check_posts_with_the_key() {
     Mock::given(method("POST"))
         .and(path("/v1/email/check"))
         .and(header("authorization", "Bearer test-key"))
-        .and(header("user-agent", "ipscanner-rust/0.3.0"))
+        .and(header("user-agent", "ipscanner-rust/0.3.1"))
         .and(body_json(json!({ "email": "jane@outlok.com" })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "email": "jane@outlok.com", "status": "risky", "reason": "typo",
